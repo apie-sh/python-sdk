@@ -32,7 +32,7 @@ apie = "apie.cli:main"
 
 [project.urls]
 Homepage = "https://apie.sh"
-Documentation = "https://docs.apie.sh"
+Documentation = "https://apie.mintlify.site/"
 Repository = "https://github.com/apie-sh/python-sdk"
 
 [tool.hatch.build.targets.wheel]

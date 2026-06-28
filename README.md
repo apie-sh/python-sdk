@@ -2,6 +2,8 @@
 
 Official Python SDK for [Apie](https://apie.sh) — runtime visibility and guardrails for AI agents.
 
+**[Full documentation →](https://apie.mintlify.site/)**
+
 ## Install
 
 ```bash
@@ -180,6 +182,21 @@ with_mcp_tool_call(
     lambda: mcp_client.call_tool("trigger_pipeline", {"service": "payments-service"}),
 )
 ```
+
+## Documentation
+
+| Topic | Link |
+| --- | --- |
+| Connect your first agent | [apie.mintlify.site/getting-started/connect-your-first-agent](https://apie.mintlify.site/getting-started/connect-your-first-agent) |
+| Configuration reference | [apie.mintlify.site/reference/configuration](https://apie.mintlify.site/reference/configuration) |
+| How Apie works | [apie.mintlify.site/concepts/how-apie-works](https://apie.mintlify.site/concepts/how-apie-works) |
+| Trace runs and sessions | [apie.mintlify.site/observe/trace-runs-and-sessions](https://apie.mintlify.site/observe/trace-runs-and-sessions) |
+| Guardrails | [apie.mintlify.site/guardrails/enforce-guardrails](https://apie.mintlify.site/guardrails/enforce-guardrails) |
+| Choose how to instrument | [apie.mintlify.site/getting-started/choose-how-to-instrument](https://apie.mintlify.site/getting-started/choose-how-to-instrument) |
+| Multi-agent pipelines | [apie.mintlify.site/observe/multi-agent-pipelines](https://apie.mintlify.site/observe/multi-agent-pipelines) |
+| Integrations | [apie.mintlify.site/integrations/index](https://apie.mintlify.site/integrations/index) |
+| Recipes | [apie.mintlify.site/recipes/incident-remediation](https://apie.mintlify.site/recipes/incident-remediation) |
+| CLI | [apie.mintlify.site/reference/cli](https://apie.mintlify.site/reference/cli) |
 
 ## Examples
 
