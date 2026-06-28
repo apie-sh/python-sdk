@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Literal, Optional, cast
 
@@ -14,10 +16,12 @@ app = typer.Typer(help="Apie CLI for agent instrumentation")
 capabilities_app = typer.Typer(help="Capability management commands")
 guardrails_app = typer.Typer(help="Guardrail management commands")
 report_app = typer.Typer(help="Boundary report commands")
+mcp_app = typer.Typer(help="MCP proxy commands")
 
 app.add_typer(capabilities_app, name="capabilities")
 app.add_typer(guardrails_app, name="guardrails")
 app.add_typer(report_app, name="report")
+app.add_typer(mcp_app, name="mcp")
 
 
 def _slugify(name: str) -> str:
@@ -153,9 +157,28 @@ def send_test_event_command(
     typer.echo(f"Agent dashboard: {registration.dashboard_url}")
 
 
+def _parse_approval_timeout(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.fullmatch(r"(\d+)(ms|s|m|h)?", value.strip(), re.I)
+    if not match:
+        raise typer.BadParameter(f"Invalid approval timeout: {value}")
+    amount = int(match.group(1))
+    unit = (match.group(2) or "ms").lower()
+    if unit == "h":
+        return amount * 60 * 60 * 1000
+    if unit == "m":
+        return amount * 60 * 1000
+    if unit == "s":
+        return amount * 1000
+    return amount
+
+
 @app.command("doctor")
 def doctor_command(
     send_test: bool = typer.Option(False, "--send-test", help="Send a test event after checks"),
+    mcp: bool = typer.Option(False, "--mcp", help="Validate MCP proxy config and ingest"),
+    mcp_config: str = typer.Option("apie.mcp.json", "--mcp-config", help="MCP proxy config path"),
 ) -> None:
     apie = Apie.create()
     try:
@@ -208,6 +231,59 @@ def doctor_command(
                 typer.echo(
                     f"Session replay: {registration.dashboard_url.rstrip('/')}/sessions/{result.session_id}"
                 )
+
+        if mcp:
+            from .mcp_core.client import ApieMcpClient, ApieMcpClientOptions
+            from .mcp_core.config import load_mcp_proxy_config
+            from .mcp_core.payload import McpToolCallInput, build_mcp_tool_call_payload
+            from .types import ApieRuntimeConfig
+
+            typer.echo(f"MCP proxy config: {mcp_config}")
+            mcp_loaded = load_mcp_proxy_config(mcp_config)
+            typer.echo(f"MCP server: {mcp_loaded.server_name}")
+            typer.echo(f"MCP agent key: {mcp_loaded.agent_key}")
+            typer.echo(f"MCP release mode: {mcp_loaded.release_mode}")
+            typer.echo(
+                "MCP upstream: "
+                f"{mcp_loaded.upstream.command} {' '.join(mcp_loaded.upstream.args)}".strip()
+            )
+
+            mcp_client = ApieMcpClient(
+                ApieMcpClientOptions(
+                    agent_key=mcp_loaded.agent_key,
+                    agent_name=mcp_loaded.agent_name,
+                    release_mode=mcp_loaded.release_mode,
+                    runtime=ApieRuntimeConfig(framework="mcp-proxy", language="python"),
+                )
+            )
+            mcp_registration = mcp_client.identify()
+            typer.echo(f"MCP proxy agent ID: {mcp_registration.agent_id}")
+
+            preview_tool = f"{mcp_loaded.server_name}.doctor_preview"
+            guard_preview = mcp_client.evaluate(
+                "run_doctor_mcp",
+                build_mcp_tool_call_payload(
+                    McpToolCallInput(
+                        server_name=mcp_loaded.server_name,
+                        tool_name="doctor_preview",
+                    )
+                ),
+            )
+            typer.echo(f"MCP guard preview decision: {guard_preview.type}")
+            mcp_client.send(
+                [
+                    mcp_client.build_mcp_called_event(
+                        "run_doctor_mcp",
+                        preview_tool,
+                        {
+                            "server": mcp_loaded.server_name,
+                            "tool": "doctor_preview",
+                        },
+                    ),
+                    mcp_client.build_mcp_completed_event("run_doctor_mcp", preview_tool),
+                ]
+            )
+            typer.echo("MCP proxy test events sent.")
     finally:
         try:
             apie.flush()
@@ -271,6 +347,59 @@ def report_create_command(
             typer.echo(f"JSON export:\n{export_urls['json']}")
     apie.shutdown()
     typer.echo(f"Report {result.report_id}")
+
+
+@mcp_app.command("proxy")
+def mcp_proxy_command(
+    config: str = typer.Option("apie.mcp.json", "--config", help="MCP proxy config path"),
+    server: Optional[str] = typer.Option(None, "--server", help="Named server from multi-server config"),
+    transport: str = typer.Option("stdio", "--transport", help="stdio or sse"),
+    port: int = typer.Option(3100, "--port", help="SSE listen port"),
+    release_mode: Optional[str] = typer.Option(None, "--release-mode", help="monitor or guard"),
+    approval_timeout: Optional[str] = typer.Option(None, "--approval-timeout", help="Approval wait timeout"),
+    upstream_command: Optional[str] = typer.Option(None, "--upstream-command"),
+    upstream_arg: list[str] = typer.Option(None, "--upstream-arg"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+) -> None:
+    from .mcp_core.config import load_mcp_proxy_config
+    from .mcp_proxy import SseProxyOptions, StdioProxyOptions, require_mcp_sdk, start_sse_proxy, start_stdio_proxy
+
+    require_mcp_sdk()
+    loaded = load_mcp_proxy_config(config, server)
+    if release_mode in {"guard", "monitor"}:
+        loaded.release_mode = release_mode  # type: ignore[assignment]
+    timeout_ms = _parse_approval_timeout(approval_timeout)
+    if timeout_ms is not None:
+        loaded.approval_timeout_ms = timeout_ms
+    if upstream_command:
+        from .mcp_core.config import McpUpstreamConfig
+
+        loaded.upstream = McpUpstreamConfig(
+            command=upstream_command,
+            args=upstream_arg or [],
+        )
+
+    normalized = transport.lower()
+    if normalized == "sse":
+        asyncio.run(
+            start_sse_proxy(
+                SseProxyOptions(
+                    config=loaded,
+                    port=port,
+                    run_id=run_id,
+                )
+            )
+        )
+        return
+
+    asyncio.run(
+        start_stdio_proxy(
+            StdioProxyOptions(
+                config=loaded,
+                run_id=run_id,
+            )
+        )
+    )
 
 
 def main() -> None:

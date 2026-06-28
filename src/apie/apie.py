@@ -60,6 +60,7 @@ from .reports import (
     wait_until_report_ready,
 )
 from .runs import async_complete_run, async_create_run, complete_run, create_run
+from .context import resolve_run_id, _run_id, _session_id
 from .sessions import (
     async_complete_session,
     async_create_child_run,
@@ -494,6 +495,8 @@ class Apie:
 
         previous = self._active_session_id
         self._active_session_id = session_id or run.session_id
+        run_token = _run_id.set(run.id)
+        session_token = _session_id.set(session_id or run.session_id)
         try:
             yield run
             self.complete_run(run.id, status="completed")
@@ -502,6 +505,8 @@ class Apie:
             self.complete_run(run.id, status="failed")
             raise
         finally:
+            _run_id.reset(run_token)
+            _session_id.reset(session_token)
             self._active_session_id = previous
             self.flush()
 
@@ -993,10 +998,11 @@ class Apie:
         should_evaluate = input.get("guard", True) is not False
         action = input.get("action") or {"type": "execute", "name": input["tool"]["name"]}
         resource = input.get("resource") or {"type": "unknown"}
+        run_id = resolve_run_id(input.get("runId"))
         if should_evaluate:
             decision = self._evaluate_guard_decision(
                 {
-                    "runId": input.get("runId"),
+                    "runId": run_id,
                     "action": action,
                     "resource": resource,
                     "tool": input.get("tool"),
@@ -1006,7 +1012,7 @@ class Apie:
             )
             self._enforce_guard_decision(
                 {
-                    "runId": input.get("runId"),
+                    "runId": run_id,
                     "action": action,
                     "resource": resource,
                     "tool": input.get("tool"),
@@ -1014,10 +1020,10 @@ class Apie:
                 decision,
             )
 
-        self.track_tool_call(input)
+        self.track_tool_call({**input, "runId": run_id})
         self.track_action_requested(
             {
-                "runId": input.get("runId"),
+                "runId": run_id,
                 "action": action,
                 "resource": resource,
                 "tool": input.get("tool"),
@@ -1028,7 +1034,7 @@ class Apie:
             yield
             self.track_action_completed(
                 {
-                    "runId": input.get("runId"),
+                    "runId": run_id,
                     "action": action,
                     "resource": resource,
                     "tool": input.get("tool"),
@@ -1038,7 +1044,7 @@ class Apie:
         except Exception as error:
             self.track_action_failed(
                 {
-                    "runId": input.get("runId"),
+                    "runId": run_id,
                     "action": action,
                     "resource": resource,
                     "tool": input.get("tool"),
@@ -1046,7 +1052,7 @@ class Apie:
                     "metadata": input.get("metadata"),
                 }
             )
-            self.capture_error(error, run_id=input.get("runId"))
+            self.capture_error(error, run_id=run_id)
             self.flush()
             raise
 

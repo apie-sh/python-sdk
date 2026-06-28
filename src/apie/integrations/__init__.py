@@ -32,6 +32,12 @@ from .llm_tool_call import (
     with_tool_call_guard_async,
 )
 from .mcp import with_mcp_tool_call, with_mcp_tool_call_async
+from .mcp_client import (
+    create_instrumented_mcp_client,
+    create_instrumented_mcp_client_async,
+)
+from .langchain_callback import ApieCallbackHandler
+from .openai_agents_hooks import create_apie_run_hooks
 from .openai_agents import (
     with_openai_agent_step,
     with_openai_agent_step_async,
@@ -93,6 +99,10 @@ __all__ = [
     "with_observability_correlation_async",
     "with_mcp_tool_call",
     "with_mcp_tool_call_async",
+    "create_instrumented_mcp_client",
+    "create_instrumented_mcp_client_async",
+    "ApieCallbackHandler",
+    "create_apie_run_hooks",
     "with_openai_tool_call",
     "with_openai_tool_call_async",
     "with_anthropic_tool_call",

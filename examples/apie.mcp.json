@@ -1,0 +1,11 @@
+{
+  "agentKey": "incident-remediation-agent",
+  "serverName": "filesystem",
+  "releaseMode": "monitor",
+  "environment": "development",
+  "upstream": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  },
+  "redactKeys": ["token", "password", "secret"]
+}
