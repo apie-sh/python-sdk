@@ -11,6 +11,7 @@ def test_resolve_config_uses_env_defaults(monkeypatch) -> None:
 
     assert config.api_key == "apie_sk_test_123"
     assert config.base_url == "https://api.apie.sh"
+    assert config.mode == "monitor"
     assert config.release_mode == "monitor"
 
 
@@ -19,5 +20,15 @@ def test_resolve_config_maps_legacy_mode(monkeypatch) -> None:
     monkeypatch.setenv("APIE_API_KEY", "apie_sk_test_123")
 
     config = resolve_config({"agent": {"key": "agent", "name": "Agent"}, "mode": "enforce"})
-    assert config.release_mode == "guard"
+    assert config.mode == "enforce"
+    assert config.release_mode == "enforce"
     assert config.base_url == "http://localhost:3000"
+
+
+def test_resolve_config_normalizes_legacy_guard(monkeypatch) -> None:
+    monkeypatch.setenv("APIE_API_KEY", "apie_sk_test_123")
+
+    config = resolve_config(
+        {"agent": {"key": "agent", "name": "Agent"}, "releaseMode": "guard"}
+    )
+    assert config.mode == "enforce"

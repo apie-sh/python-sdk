@@ -9,6 +9,63 @@ from .http import AsyncHttpClient, HttpClient
 from .types import GuardDecision, JsonDict, QueuedEvent
 
 ApprovalWaitStatus = Literal["approved", "rejected", "expired", "cancelled", "timeout"]
+DecisionType = Literal["allow", "block", "warn", "require_approval"]
+
+
+def _coerce_decision(value: object, default: DecisionType = "allow") -> DecisionType:
+    return value if value in {"allow", "block", "warn", "require_approval"} else default  # type: ignore[return-value]
+
+
+def _effective_decision(policy_decision: DecisionType, mode: str) -> DecisionType:
+    if mode == "monitor" and policy_decision in {"block", "require_approval"}:
+        return "allow"
+    return policy_decision
+
+
+def _enforcement_action(decision: DecisionType) -> Literal[
+    "proceed", "warn", "block", "wait_for_approval"
+]:
+    if decision == "block":
+        return "block"
+    if decision == "require_approval":
+        return "wait_for_approval"
+    if decision == "warn":
+        return "warn"
+    return "proceed"
+
+
+def _parse_guard_decision(response: dict[str, object], fallback_mode: str) -> GuardDecision:
+    policy_decision = _coerce_decision(
+        response.get("policy_decision") or response.get("decision")
+    )
+    mode = response.get("mode") if response.get("mode") in {"monitor", "enforce"} else fallback_mode
+    effective_decision = _coerce_decision(
+        response.get("effective_decision"),
+        _effective_decision(policy_decision, str(mode)),
+    )
+    enforcement_action = response.get("enforcement_action")
+    if enforcement_action not in {"proceed", "warn", "block", "wait_for_approval"}:
+        enforcement_action = _enforcement_action(effective_decision)
+    approval_request = response.get("approval_request")
+    approval_id = (
+        approval_request.get("id")
+        if isinstance(approval_request, dict)
+        else response.get("approval_id")
+    )
+    return GuardDecision(
+        policy_decision=policy_decision,
+        effective_decision=effective_decision,
+        mode=mode,  # type: ignore[arg-type]
+        enforcement_action=enforcement_action,  # type: ignore[arg-type]
+        reason=response.get("reason") if isinstance(response.get("reason"), str) else None,
+        decision_id=(
+            response.get("decision_id") if isinstance(response.get("decision_id"), str) else None
+        ),
+        receipt_id=response.get("receipt_id") if isinstance(response.get("receipt_id"), str) else None,
+        approval_id=approval_id if isinstance(approval_id, str) else None,
+        matched_guardrails=response.get("matched_guardrails", [])  # type: ignore[arg-type]
+        or [],
+    )
 
 
 def _redact_guard_payload(
@@ -69,23 +126,7 @@ def evaluate_guard(
         redact_keys=redact_keys,
     )
     response = http.post("/v1/guardrails/evaluate", body)
-    approval_request = response.get("approval_request") if isinstance(response, dict) else None
-    approval_id = (
-        approval_request.get("id")
-        if isinstance(approval_request, dict)
-        else response.get("approval_id")
-        if isinstance(response, dict)
-        else None
-    )
-    return GuardDecision(
-        type=response.get("decision", "allow"),
-        reason=response.get("reason"),
-        decision_id=response.get("decision_id"),
-        receipt_id=response.get("receipt_id"),
-        approval_id=approval_id,
-        matched_guardrails=response.get("matched_guardrails", []) or [],
-        monitor_decision=response.get("decision", "allow"),
-    )
+    return _parse_guard_decision(response, mode)
 
 
 def get_approval_status(http: HttpClient, approval_id: str) -> dict[str, str]:
@@ -150,23 +191,7 @@ async def async_evaluate_guard(
         redact_keys=redact_keys,
     )
     response = await http.post("/v1/guardrails/evaluate", body)
-    approval_request = response.get("approval_request") if isinstance(response, dict) else None
-    approval_id = (
-        approval_request.get("id")
-        if isinstance(approval_request, dict)
-        else response.get("approval_id")
-        if isinstance(response, dict)
-        else None
-    )
-    return GuardDecision(
-        type=response.get("decision", "allow"),
-        reason=response.get("reason"),
-        decision_id=response.get("decision_id"),
-        receipt_id=response.get("receipt_id"),
-        approval_id=approval_id,
-        matched_guardrails=response.get("matched_guardrails", []) or [],
-        monitor_decision=response.get("decision", "allow"),
-    )
+    return _parse_guard_decision(response, mode)
 
 
 async def async_get_approval_status(http: AsyncHttpClient, approval_id: str) -> dict[str, str]:

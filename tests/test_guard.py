@@ -20,12 +20,12 @@ def _registration() -> RegisterResponse:
     )
 
 
-def _config(release_mode: str = "monitor") -> dict:
+def _config(mode: str = "monitor") -> dict:
     return {
         "api_key": "apie_sk_test_xxxxxxxx",
         "agent": {"key": "test-agent", "name": "Test"},
         "base_url": "http://localhost:3000",
-        "release_mode": release_mode,
+        "mode": mode,
     }
 
 
@@ -37,10 +37,16 @@ def test_monitor_mode_converts_block_to_allow(monkeypatch) -> None:
     monkeypatch.setattr(
         apie_module,
         "evaluate_guard",
-        lambda *args, **kwargs: GuardDecision(type="block", reason="blocked"),
+        lambda *args, **kwargs: GuardDecision(
+            policy_decision="block",
+            effective_decision="allow",
+            mode="monitor",
+            enforcement_action="proceed",
+            reason="blocked",
+        ),
     )
 
-    apie = Apie(_config(release_mode="monitor"))
+    apie = Apie(_config(mode="monitor"))
     decision = apie.guard(
         {
             "action": {"type": "execute", "name": "deploy"},
@@ -49,8 +55,9 @@ def test_monitor_mode_converts_block_to_allow(monkeypatch) -> None:
     )
     apie.shutdown()
 
-    assert decision.type == "allow"
-    assert decision.monitor_decision == "block"
+    assert decision.policy_decision == "block"
+    assert decision.effective_decision == "allow"
+    assert decision.enforcement_action == "proceed"
 
 
 def test_monitor_mode_preserves_warn(monkeypatch) -> None:
@@ -61,10 +68,16 @@ def test_monitor_mode_preserves_warn(monkeypatch) -> None:
     monkeypatch.setattr(
         apie_module,
         "evaluate_guard",
-        lambda *args, **kwargs: GuardDecision(type="warn", reason="warning"),
+        lambda *args, **kwargs: GuardDecision(
+            policy_decision="warn",
+            effective_decision="warn",
+            mode="monitor",
+            enforcement_action="warn",
+            reason="warning",
+        ),
     )
 
-    apie = Apie(_config(release_mode="monitor"))
+    apie = Apie(_config(mode="monitor"))
     decision = apie.guard(
         {
             "action": {"type": "execute", "name": "deploy"},
@@ -73,5 +86,5 @@ def test_monitor_mode_preserves_warn(monkeypatch) -> None:
     )
     apie.shutdown()
 
-    assert decision.type == "warn"
-    assert decision.monitor_decision == "warn"
+    assert decision.policy_decision == "warn"
+    assert decision.effective_decision == "warn"

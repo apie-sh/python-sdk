@@ -17,6 +17,7 @@ capabilities_app = typer.Typer(help="Capability management commands")
 guardrails_app = typer.Typer(help="Guardrail management commands")
 report_app = typer.Typer(help="Boundary report commands")
 mcp_app = typer.Typer(help="MCP proxy commands")
+UPSTREAM_ARG_OPTION = typer.Option(None, "--upstream-arg")
 
 app.add_typer(capabilities_app, name="capabilities")
 app.add_typer(guardrails_app, name="guardrails")
@@ -114,7 +115,7 @@ apie = Apie(
             "framework": "{framework}",
             "language": "python",
         }},
-        "release_mode": "monitor",{capability_block}
+        "mode": "monitor",{capability_block}
     }}
 )
 """
@@ -135,16 +136,17 @@ apie = Apie(
     typer.echo("Apie initialized")
     typer.echo("Import and initialize:")
     typer.echo("from apie.config import apie\napie.ready()")
+    typer.echo("Then run: apie send-test-event --mode proof")
 
 
 @app.command("send-test-event")
 def send_test_event_command(
-    mode: str = typer.Option("pipeline", help="pipeline (default) or single"),
+    mode: str = typer.Option("pipeline", help="pipeline (default), single, or proof"),
 ) -> None:
-    normalized = "single" if mode == "single" else "pipeline"
+    normalized = "single" if mode == "single" else "proof" if mode == "proof" else "pipeline"
     apie = Apie.create()
     registration = apie.ready()
-    typer.echo(f"Sending test event for agent {registration.agent_id} ({normalized} mode)...")
+    typer.echo(f"Sending {normalized} test event for agent {registration.agent_id}...")
     result = apie.send_test_event({"mode": normalized})
     apie.flush()
     apie.shutdown()
@@ -189,7 +191,7 @@ def doctor_command(
         typer.echo(f"Enabled: {'yes' if diagnosis['enabled'] else 'no'}")
         typer.echo(f"Base URL: {diagnosis['baseUrl']}")
         typer.echo(f"API key configured: {'yes' if diagnosis['apiKeyConfigured'] else 'no'}")
-        typer.echo(f"Release mode: {diagnosis['releaseMode']}")
+        typer.echo(f"Mode: {diagnosis['mode']}")
         typer.echo(f"Guard failure mode: {diagnosis['guardFailureMode']}")
         typer.echo(f"Runtime environment: {diagnosis['runtimeEnvironment'] or 'unset'}")
         typer.echo(f"Runtime framework: {diagnosis['runtimeFramework'] or 'unset'}")
@@ -222,6 +224,10 @@ def doctor_command(
         if queue.last_error_at:
             suffix = f" ({queue.last_error_message})" if queue.last_error_message else ""
             typer.echo(f"Last queue error at: {queue.last_error_at}{suffix}")
+        if diagnosis.get("trustWarnings"):
+            typer.echo("Production trust warnings:")
+            for warning in diagnosis["trustWarnings"]:
+                typer.echo(f"- {warning}")
 
         if send_test:
             typer.echo("Sending doctor test event...")
@@ -242,7 +248,7 @@ def doctor_command(
             mcp_loaded = load_mcp_proxy_config(mcp_config)
             typer.echo(f"MCP server: {mcp_loaded.server_name}")
             typer.echo(f"MCP agent key: {mcp_loaded.agent_key}")
-            typer.echo(f"MCP release mode: {mcp_loaded.release_mode}")
+            typer.echo(f"MCP mode: {mcp_loaded.mode}")
             typer.echo(
                 "MCP upstream: "
                 f"{mcp_loaded.upstream.command} {' '.join(mcp_loaded.upstream.args)}".strip()
@@ -252,7 +258,7 @@ def doctor_command(
                 ApieMcpClientOptions(
                     agent_key=mcp_loaded.agent_key,
                     agent_name=mcp_loaded.agent_name,
-                    release_mode=mcp_loaded.release_mode,
+                    mode=mcp_loaded.mode,
                     runtime=ApieRuntimeConfig(framework="mcp-proxy", language="python"),
                 )
             )
@@ -269,7 +275,11 @@ def doctor_command(
                     )
                 ),
             )
-            typer.echo(f"MCP guard preview decision: {guard_preview.type}")
+            typer.echo(
+                "MCP guard preview decision: "
+                f"policy={guard_preview.policy_decision}, "
+                f"effective={guard_preview.effective_decision}"
+            )
             mcp_client.send(
                 [
                     mcp_client.build_mcp_called_event(
@@ -312,9 +322,9 @@ def guardrails_enable_command(
     apie = Apie.create()
     result = apie.enable_guardrail_template(key)
     if mode == "monitor":
-        typer.echo("Template enabled. Keep release_mode='monitor' to observe without blocking.")
+        typer.echo('Template enabled. Keep mode="monitor" to observe without blocking.')
     elif mode == "enforce":
-        typer.echo("Set release_mode='guard' (or mode='enforce') in apie config to enforce.")
+        typer.echo('Set mode="enforce" in apie config to enforce decisions.')
     typer.echo(f"Enabled {result.get('key', key)}")
 
 
@@ -355,19 +365,27 @@ def mcp_proxy_command(
     server: Optional[str] = typer.Option(None, "--server", help="Named server from multi-server config"),
     transport: str = typer.Option("stdio", "--transport", help="stdio or sse"),
     port: int = typer.Option(3100, "--port", help="SSE listen port"),
-    release_mode: Optional[str] = typer.Option(None, "--release-mode", help="monitor or guard"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="monitor or enforce"),
     approval_timeout: Optional[str] = typer.Option(None, "--approval-timeout", help="Approval wait timeout"),
     upstream_command: Optional[str] = typer.Option(None, "--upstream-command"),
-    upstream_arg: list[str] = typer.Option(None, "--upstream-arg"),
+    upstream_arg: list[str] = UPSTREAM_ARG_OPTION,
     run_id: Optional[str] = typer.Option(None, "--run-id"),
 ) -> None:
     from .mcp_core.config import load_mcp_proxy_config
-    from .mcp_proxy import SseProxyOptions, StdioProxyOptions, require_mcp_sdk, start_sse_proxy, start_stdio_proxy
+    from .mcp_proxy import (
+        SseProxyOptions,
+        StdioProxyOptions,
+        require_mcp_sdk,
+        start_sse_proxy,
+        start_stdio_proxy,
+    )
 
     require_mcp_sdk()
     loaded = load_mcp_proxy_config(config, server)
-    if release_mode in {"guard", "monitor"}:
-        loaded.release_mode = release_mode  # type: ignore[assignment]
+    if mode in {"enforce", "monitor"}:
+        loaded.mode = mode  # type: ignore[assignment]
+    elif mode:
+        raise typer.BadParameter("--mode must be monitor or enforce")
     timeout_ms = _parse_approval_timeout(approval_timeout)
     if timeout_ms is not None:
         loaded.approval_timeout_ms = timeout_ms

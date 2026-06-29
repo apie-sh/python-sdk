@@ -19,7 +19,16 @@ from ..events import (
 from ..guard import evaluate_guard, wait_for_approval
 from ..http import ApieClientOptions, HttpClient
 from ..registration import identify_agent
-from ..types import ApieAgentConfig, ApieConfig, ApieRuntimeConfig, GuardDecision, QueuedEvent, RegisterResponse, ReleaseMode, ToolDefinitionInput
+from ..types import (
+    ApieAgentConfig,
+    ApieConfig,
+    ApieRuntimeConfig,
+    GuardDecision,
+    QueuedEvent,
+    RegisterResponse,
+    ReleaseMode,
+    ToolDefinitionInput,
+)
 from .payload import McpGuardPayload
 
 
@@ -29,14 +38,14 @@ class ApieMcpClientOptions:
     api_key: str | None = None
     base_url: str | None = None
     agent_name: str | None = None
-    release_mode: ReleaseMode = "monitor"
+    mode: ReleaseMode = "monitor"
     runtime: ApieRuntimeConfig | None = None
 
 
 class ApieMcpClient:
     def __init__(self, options: ApieMcpClientOptions) -> None:
         self._agent_key = options.agent_key
-        self._release_mode = options.release_mode
+        self._mode = options.mode
         self._agent_name = options.agent_name
         self._runtime = options.runtime
         self._registration: RegisterResponse | None = None
@@ -46,7 +55,7 @@ class ApieMcpClient:
         self._http = HttpClient(ApieClientOptions(base_url=base_url, api_key=api_key))
 
     def guard_mode(self) -> Literal["monitor", "enforce"]:
-        return "enforce" if self._release_mode == "guard" else "monitor"
+        return self._mode
 
     def identify(self) -> RegisterResponse:
         if self._registration:
@@ -57,7 +66,7 @@ class ApieMcpClient:
                 name=self._agent_name or self._agent_key,
             ),
             runtime=self._runtime or ApieRuntimeConfig(),
-            release_mode=self._release_mode,
+            mode=self._mode,
         )
         self._registration = identify_agent(self._http, config)
         return self._registration
@@ -82,18 +91,12 @@ class ApieMcpClient:
             metadata=payload.metadata,
         )
 
-        if self.guard_mode() == "monitor" and decision.type in {"block", "require_approval"}:
-            action = "block" if decision.type == "block" else "require approval"
-            print(f"[apie] Would {action} in guard mode: {decision.reason}")
-            return GuardDecision(
-                type="allow",
-                reason=decision.reason,
-                decision_id=decision.decision_id,
-                approval_id=decision.approval_id,
-                receipt_id=decision.receipt_id,
-                monitor_decision=decision.type,
-                matched_guardrails=decision.matched_guardrails,
-            )
+        if self.guard_mode() == "monitor" and decision.policy_decision in {
+            "block",
+            "require_approval",
+        }:
+            action = "block" if decision.policy_decision == "block" else "require approval"
+            print(f"[apie] Would {action} in Enforce mode: {decision.reason}")
         return decision
 
     def wait_for_approval(self, approval_id: str, timeout_ms: int | None = None) -> str:
@@ -240,7 +243,10 @@ class ApieMcpClient:
             self._agent_key,
             {
                 "runId": run_id,
-                "decision": decision.monitor_decision or decision.type,
+                "policyDecision": decision.policy_decision,
+                "effectiveDecision": decision.effective_decision,
+                "enforcementAction": decision.enforcement_action,
+                "mode": decision.mode,
                 "reason": decision.reason,
                 "action": payload.action,
                 "resource": payload.resource,

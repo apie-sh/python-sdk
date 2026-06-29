@@ -17,6 +17,7 @@ from .config import (
     load_apie_module,
     resolve_config,
 )
+from .context import _run_id, _session_id, resolve_run_id
 from .events import (
     async_validate_events,
     build_action_completed_event,
@@ -60,7 +61,6 @@ from .reports import (
     wait_until_report_ready,
 )
 from .runs import async_complete_run, async_create_run, complete_run, create_run
-from .context import resolve_run_id, _run_id, _session_id
 from .sessions import (
     async_complete_session,
     async_create_child_run,
@@ -98,6 +98,60 @@ def _to_tool_dict(tool: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
         "provider": tool.get("provider"),
         "riskLevel": tool.get("riskLevel") or tool.get("risk_level"),
     }
+
+
+def _redaction_enabled(config: ApieConfig) -> bool:
+    return bool(config.redact or config.redact_keys or config.redact_deny_patterns)
+
+
+def _trust_warnings(
+    config: ApieConfig,
+    *,
+    mode: str,
+    queue: EventQueueDiagnostics,
+) -> list[str]:
+    warnings: list[str] = []
+    if mode == "enforce" and config.guard_failure_mode != "fail_closed":
+        warnings.append("Enforce mode is configured without fail_closed guard failure behavior.")
+    if not _redaction_enabled(config):
+        warnings.append("No SDK redaction is configured for production telemetry.")
+    high_risk_tools = [
+        {
+            "risk_level": tool.risk_level,
+            "action_types": tool.action_types,
+            "resource_types": tool.resource_types,
+            "environments": tool.environments,
+        }
+        for tool in config.tools
+    ]
+    high_risk_tools.extend(
+        {
+            "risk_level": capability.risk_level,
+            "action_types": capability.actions,
+            "resource_types": capability.resources,
+            "environments": capability.environments,
+        }
+        for capability in config.capabilities
+    )
+    if any(
+        tool["risk_level"] == "high"
+        and (
+            not tool["action_types"]
+            or not tool["resource_types"]
+            or not tool["environments"]
+        )
+        for tool in high_risk_tools
+    ):
+        warnings.append(
+            "High-risk tools are missing explicit action, resource, or environment metadata."
+        )
+    if queue.last_error_at or queue.dropped_count > 0:
+        warnings.append("The local event queue has recent errors or dropped events.")
+    if not config.queue_storage_path:
+        warnings.append(
+            "Durable queue storage is not configured; call shutdown or flush on process exit."
+        )
+    return warnings
 
 
 @dataclass(slots=True)
@@ -851,14 +905,14 @@ class Apie:
         )
 
     def _is_enforce_mode(self) -> bool:
-        return self._config.release_mode == "guard"
+        return (self._config.mode or self._config.release_mode) == "enforce"
 
     def _guard_mode(self) -> str:
         return "enforce" if self._is_enforce_mode() else "monitor"
 
     def _evaluate_guard_decision(self, input: dict[str, Any]) -> GuardDecision:
         if not self._is_enabled():
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
         try:
             raw = evaluate_guard(
                 self._http,
@@ -874,33 +928,28 @@ class Apie:
                 redact_keys=self._config.redact_keys,
             )
             if not self._is_enforce_mode():
-                if raw.type in {"block", "require_approval"} and raw.reason:
+                if raw.policy_decision in {"block", "require_approval"} and raw.reason:
                     print(
                         "[apie] Would "
-                        + ("block" if raw.type == "block" else "require approval")
-                        + f" in enforcement mode: {raw.reason}"
+                        + ("block" if raw.policy_decision == "block" else "require approval")
+                        + f" in Enforce mode: {raw.reason}"
                     )
-                if raw.type == "warn" and raw.reason:
+                if raw.policy_decision == "warn" and raw.reason:
                     print(f"[apie] Guardrail warning: {raw.reason}")
-                monitor_type = raw.type
-                effective = "warn" if raw.type == "warn" else "allow"
-                return GuardDecision(
-                    type=effective,  # type: ignore[arg-type]
-                    reason=raw.reason,
-                    decision_id=raw.decision_id,
-                    approval_id=raw.approval_id,
-                    receipt_id=raw.receipt_id,
-                    monitor_decision=monitor_type,
-                    matched_guardrails=raw.matched_guardrails,
-                )
             return raw
         except Exception as error:
             if self._config.guard_failure_mode == "fail_closed":
-                return GuardDecision(type="block", reason=str(error))
+                return GuardDecision(
+                    policy_decision="block",
+                    effective_decision="block",
+                    mode=self._guard_mode(),  # type: ignore[arg-type]
+                    enforcement_action="block",
+                    reason=str(error),
+                )
             if self._config.guard_failure_mode == "throw":
                 raise
             self._handle_queue_error(error)
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
 
     def _enforce_guard_decision(self, input: dict[str, Any], decision: GuardDecision) -> None:
         ctx = self._event_context(input.get("runId"))
@@ -909,7 +958,10 @@ class Apie:
                 self._config.agent.key,
                 {
                     **ctx,
-                    "decision": decision.monitor_decision or decision.type,
+                    "policyDecision": decision.policy_decision,
+                    "effectiveDecision": decision.effective_decision,
+                    "enforcementAction": decision.enforcement_action,
+                    "mode": decision.mode,
                     "reason": decision.reason,
                     "action": input.get("action"),
                     "resource": input.get("resource"),
@@ -917,13 +969,13 @@ class Apie:
             )
         )
 
-        if decision.type == "block":
+        if decision.effective_decision == "block":
             raise RuntimeError(decision.reason or "Action blocked by guardrail")
 
-        if decision.type == "warn" and decision.reason:
+        if decision.effective_decision == "warn" and decision.reason:
             print(f"[apie] Guardrail warning: {decision.reason}")
 
-        if decision.type == "require_approval" and decision.approval_id:
+        if decision.effective_decision == "require_approval" and decision.approval_id:
             self.track_approval_requested(
                 {
                     "runId": input.get("runId"),
@@ -1064,6 +1116,8 @@ class Apie:
         mode = (options or {}).get("mode", "pipeline")
         if mode == "single":
             return self._send_single_test_event()
+        if mode == "proof":
+            return self._send_proof_test_event()
         return self._send_pipeline_test_event()
 
     def _send_single_test_event(self) -> SendTestEventResult:
@@ -1237,6 +1291,77 @@ class Apie:
         )
         return SendTestEventResult(session_id=session_id, run_ids=run_ids, mode="pipeline")
 
+    def _send_proof_test_event(self) -> SendTestEventResult:
+        session_id = ""
+        run_ids: list[str] = []
+
+        def _session_fn(session: ApieSession) -> None:
+            nonlocal session_id
+            session_id = session.id
+
+            def _run_fn(run: AgentRun) -> None:
+                run_ids.append(run.id)
+                self.with_tool(
+                    {
+                        "runId": run.id,
+                        "tool": {
+                            "name": "proof.inspect_release",
+                            "provider": "apie",
+                            "riskLevel": "low",
+                        },
+                        "action": {"type": "read", "name": "inspect_release"},
+                        "resource": {
+                            "type": "deployment_event",
+                            "provider": "apie",
+                            "environment": "staging",
+                        },
+                        "guard": False,
+                    },
+                    lambda: {"ok": True},
+                )
+                try:
+                    self.with_guard(
+                        {
+                            "runId": run.id,
+                            "tool": {
+                                "name": "proof.deploy_release",
+                                "provider": "apie",
+                                "riskLevel": "high",
+                            },
+                            "action": {"type": "execute", "name": "deploy_release"},
+                            "resource": {
+                                "type": "deployment_event",
+                                "provider": "apie",
+                                "environment": "production",
+                            },
+                            "riskLevel": "high",
+                            "metadata": {"test": True, "scenario": "activation_proof"},
+                        },
+                        lambda: {"ok": True},
+                    )
+                except Exception as error:
+                    self.capture_error(
+                        error,
+                        run_id=run.id,
+                        session_id=session.id,
+                        metadata={"expected": True, "scenario": "activation_proof"},
+                    )
+
+            self.with_run(
+                {"sessionId": session.id, "inputSummary": "Activation proof run"},
+                _run_fn,
+            )
+
+        self.with_session(
+            {
+                "kind": "activation_proof",
+                "inputSummary": "Apie activation proof",
+                "metadata": {"test": True, "scenario": "activation_proof"},
+            },
+            _session_fn,
+        )
+        return SendTestEventResult(session_id=session_id, run_ids=run_ids, mode="proof")
+
     def flush(self) -> None:
         if not self._is_enabled():
             return
@@ -1245,7 +1370,7 @@ class Apie:
     def guard(self, input: Optional[dict[str, Any]] = None) -> GuardDecision:
         input = input or {}
         if not input.get("action") or not input.get("resource"):
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
         return self._evaluate_guard_decision(input)
 
     def create_boundary_report(self, input: Optional[BoundaryReportCreateInput] = None) -> Any:
@@ -1279,20 +1404,22 @@ class Apie:
     def doctor(self) -> dict[str, Any]:
         enabled = self._is_enabled()
         registration = self.ready() if enabled else None
+        queue = self._queue.get_diagnostics()
+        mode = self._guard_mode()
+        redaction_enabled = _redaction_enabled(self._config)
         return {
             "registration": registration,
             "enabled": enabled,
-            "releaseMode": self._config.release_mode,
+            "mode": mode,
             "guardFailureMode": self._config.guard_failure_mode,
             "baseUrl": self._config.base_url,
             "apiKeyConfigured": bool(self._config.api_key),
             "runtimeEnvironment": self._config.runtime.environment,
             "runtimeFramework": self._config.runtime.framework,
             "queueStoragePath": self._config.queue_storage_path,
-            "redactionEnabled": bool(
-                self._config.redact or self._config.redact_keys or self._config.redact_deny_patterns
-            ),
-            "queue": self._queue.get_diagnostics(),
+            "redactionEnabled": redaction_enabled,
+            "trustWarnings": _trust_warnings(self._config, mode=mode, queue=queue),
+            "queue": queue,
         }
 
 
@@ -2033,14 +2160,14 @@ class AsyncApie:
         )
 
     def _is_enforce_mode(self) -> bool:
-        return self._config.release_mode == "guard"
+        return (self._config.mode or self._config.release_mode) == "enforce"
 
     def _guard_mode(self) -> str:
         return "enforce" if self._is_enforce_mode() else "monitor"
 
     async def _evaluate_guard_decision(self, input: dict[str, Any]) -> GuardDecision:
         if not self._is_enabled():
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
         try:
             raw = await async_evaluate_guard(
                 self._http,
@@ -2056,33 +2183,28 @@ class AsyncApie:
                 redact_keys=self._config.redact_keys,
             )
             if not self._is_enforce_mode():
-                if raw.type in {"block", "require_approval"} and raw.reason:
+                if raw.policy_decision in {"block", "require_approval"} and raw.reason:
                     print(
                         "[apie] Would "
-                        + ("block" if raw.type == "block" else "require approval")
-                        + f" in enforcement mode: {raw.reason}"
+                        + ("block" if raw.policy_decision == "block" else "require approval")
+                        + f" in Enforce mode: {raw.reason}"
                     )
-                if raw.type == "warn" and raw.reason:
+                if raw.policy_decision == "warn" and raw.reason:
                     print(f"[apie] Guardrail warning: {raw.reason}")
-                monitor_type = raw.type
-                effective = "warn" if raw.type == "warn" else "allow"
-                return GuardDecision(
-                    type=effective,  # type: ignore[arg-type]
-                    reason=raw.reason,
-                    decision_id=raw.decision_id,
-                    approval_id=raw.approval_id,
-                    receipt_id=raw.receipt_id,
-                    monitor_decision=monitor_type,
-                    matched_guardrails=raw.matched_guardrails,
-                )
             return raw
         except Exception as error:
             if self._config.guard_failure_mode == "fail_closed":
-                return GuardDecision(type="block", reason=str(error))
+                return GuardDecision(
+                    policy_decision="block",
+                    effective_decision="block",
+                    mode=self._guard_mode(),  # type: ignore[arg-type]
+                    enforcement_action="block",
+                    reason=str(error),
+                )
             if self._config.guard_failure_mode == "throw":
                 raise
             self._handle_queue_error(error)
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
 
     async def _enforce_guard_decision(self, input: dict[str, Any], decision: GuardDecision) -> None:
         ctx = await self._event_context(input.get("runId"))
@@ -2091,18 +2213,21 @@ class AsyncApie:
                 self._config.agent.key,
                 {
                     **ctx,
-                    "decision": decision.monitor_decision or decision.type,
+                    "policyDecision": decision.policy_decision,
+                    "effectiveDecision": decision.effective_decision,
+                    "enforcementAction": decision.enforcement_action,
+                    "mode": decision.mode,
                     "reason": decision.reason,
                     "action": input.get("action"),
                     "resource": input.get("resource"),
                 },
             )
         )
-        if decision.type == "block":
+        if decision.effective_decision == "block":
             raise RuntimeError(decision.reason or "Action blocked by guardrail")
-        if decision.type == "warn" and decision.reason:
+        if decision.effective_decision == "warn" and decision.reason:
             print(f"[apie] Guardrail warning: {decision.reason}")
-        if decision.type == "require_approval" and decision.approval_id:
+        if decision.effective_decision == "require_approval" and decision.approval_id:
             await self.track_approval_requested(
                 {
                     "runId": input.get("runId"),
@@ -2235,6 +2360,8 @@ class AsyncApie:
         mode = (options or {}).get("mode", "pipeline")
         if mode == "single":
             return await self._send_single_test_event()
+        if mode == "proof":
+            return await self._send_proof_test_event()
         return await self._send_pipeline_test_event()
 
     async def _send_single_test_event(self) -> SendTestEventResult:
@@ -2407,6 +2534,77 @@ class AsyncApie:
         )
         return SendTestEventResult(session_id=session_id, run_ids=run_ids, mode="pipeline")
 
+    async def _send_proof_test_event(self) -> SendTestEventResult:
+        session_id = ""
+        run_ids: list[str] = []
+
+        async def _session_fn(session: ApieSession) -> None:
+            nonlocal session_id
+            session_id = session.id
+
+            async def _run_fn(run: AgentRun) -> None:
+                run_ids.append(run.id)
+                await self.with_tool(
+                    {
+                        "runId": run.id,
+                        "tool": {
+                            "name": "proof.inspect_release",
+                            "provider": "apie",
+                            "riskLevel": "low",
+                        },
+                        "action": {"type": "read", "name": "inspect_release"},
+                        "resource": {
+                            "type": "deployment_event",
+                            "provider": "apie",
+                            "environment": "staging",
+                        },
+                        "guard": False,
+                    },
+                    lambda: asyncio.sleep(0, result={"ok": True}),
+                )
+                try:
+                    await self.with_guard(
+                        {
+                            "runId": run.id,
+                            "tool": {
+                                "name": "proof.deploy_release",
+                                "provider": "apie",
+                                "riskLevel": "high",
+                            },
+                            "action": {"type": "execute", "name": "deploy_release"},
+                            "resource": {
+                                "type": "deployment_event",
+                                "provider": "apie",
+                                "environment": "production",
+                            },
+                            "riskLevel": "high",
+                            "metadata": {"test": True, "scenario": "activation_proof"},
+                        },
+                        lambda: asyncio.sleep(0, result={"ok": True}),
+                    )
+                except Exception as error:
+                    await self.capture_error(
+                        error,
+                        run_id=run.id,
+                        session_id=session.id,
+                        metadata={"expected": True, "scenario": "activation_proof"},
+                    )
+
+            await self.with_run(
+                {"sessionId": session.id, "inputSummary": "Activation proof run"},
+                _run_fn,
+            )
+
+        await self.with_session(
+            {
+                "kind": "activation_proof",
+                "inputSummary": "Apie activation proof",
+                "metadata": {"test": True, "scenario": "activation_proof"},
+            },
+            _session_fn,
+        )
+        return SendTestEventResult(session_id=session_id, run_ids=run_ids, mode="proof")
+
     async def flush(self) -> None:
         if self._is_enabled():
             await self._queue.flush()
@@ -2414,7 +2612,7 @@ class AsyncApie:
     async def guard(self, input: Optional[dict[str, Any]] = None) -> GuardDecision:
         input = input or {}
         if not input.get("action") or not input.get("resource"):
-            return GuardDecision(type="allow")
+            return GuardDecision(mode=self._guard_mode())  # type: ignore[arg-type]
         return await self._evaluate_guard_decision(input)
 
     async def create_boundary_report(
@@ -2452,20 +2650,21 @@ class AsyncApie:
     async def doctor(self) -> dict[str, Any]:
         enabled = self._is_enabled()
         registration = await self.ready() if enabled else None
+        queue = self._queue.get_diagnostics()
+        mode = self._guard_mode()
         return {
             "registration": registration,
             "enabled": enabled,
-            "releaseMode": self._config.release_mode,
+            "mode": mode,
             "guardFailureMode": self._config.guard_failure_mode,
             "baseUrl": self._config.base_url,
             "apiKeyConfigured": bool(self._config.api_key),
             "runtimeEnvironment": self._config.runtime.environment,
             "runtimeFramework": self._config.runtime.framework,
             "queueStoragePath": self._config.queue_storage_path,
-            "redactionEnabled": bool(
-                self._config.redact or self._config.redact_keys or self._config.redact_deny_patterns
-            ),
-            "queue": self._queue.get_diagnostics(),
+            "redactionEnabled": _redaction_enabled(self._config),
+            "trustWarnings": _trust_warnings(self._config, mode=mode, queue=queue),
+            "queue": queue,
         }
 
 

@@ -8,7 +8,7 @@ def main() -> None:
     apie = Apie.create(
         {
             "agent": {"key": "openai-agents-demo", "name": "OpenAI Agents Demo"},
-            "release_mode": "monitor",
+            "mode": "monitor",
         }
     )
     apie.ready()

@@ -23,12 +23,21 @@ def test_apie_send_test_event_single_when_disabled() -> None:
     assert len(result.run_ids) == 1
 
 
+def test_apie_send_test_event_proof_when_disabled() -> None:
+    apie = Apie(_disabled_config())
+    result = apie.send_test_event({"mode": "proof"})
+    assert result.mode == "proof"
+    assert result.session_id.startswith("disabled_session_")
+    assert len(result.run_ids) == 1
+
+
 def test_apie_doctor_fields() -> None:
     apie = Apie(_disabled_config())
     diagnosis = apie.doctor()
     assert diagnosis["enabled"] is False
     assert diagnosis["apiKeyConfigured"] is True
-    assert diagnosis["releaseMode"] == "monitor"
+    assert diagnosis["mode"] == "monitor"
+    assert "trustWarnings" in diagnosis
 
 
 @pytest.mark.asyncio

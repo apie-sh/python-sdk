@@ -181,12 +181,19 @@ def build_resource_touched_event(agent_key: str, input: dict[str, Any]) -> dict[
 
 
 def build_guardrail_evaluated_event(agent_key: str, input: dict[str, Any]) -> dict[str, Any]:
+    decision = {
+        "policyDecision": input.get("policyDecision"),
+        "effectiveDecision": input.get("effectiveDecision"),
+        "enforcementAction": input.get("enforcementAction"),
+        "mode": input.get("mode"),
+        "reason": input.get("reason"),
+    }
     return {
         **_base_event("agent.guardrail.evaluated", agent_key, input),
         "action": _wire_action(input.get("action")),
         "resource": _wire_resource(input.get("resource")),
-        "decision": {"type": input.get("decision"), "reason": input.get("reason")},
-        "metadata": {"decision": input.get("decision"), "reason": input.get("reason")},
+        "decision": decision,
+        "metadata": decision,
     }
 
 

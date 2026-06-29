@@ -40,7 +40,7 @@ def test_send_test_event_single_mode(monkeypatch) -> None:
     monkeypatch.setattr(apie_module.EventQueue, "stop", lambda self: None)
     monkeypatch.setattr(apie_module, "identify_agent", lambda *_: _registration())
     monkeypatch.setattr(
-        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision(type="allow")
+        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision()
     )
 
     def create_session(*args, **kwargs):
@@ -97,7 +97,7 @@ def test_send_test_event_pipeline_mode(monkeypatch) -> None:
     monkeypatch.setattr(apie_module.EventQueue, "stop", lambda self: None)
     monkeypatch.setattr(apie_module, "identify_agent", lambda *_: _registration())
     monkeypatch.setattr(
-        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision(type="allow")
+        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision()
     )
 
     def create_session(*args, **kwargs):
@@ -151,7 +151,7 @@ def test_send_test_event_defaults_to_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(apie_module.EventQueue, "stop", lambda self: None)
     monkeypatch.setattr(apie_module, "identify_agent", lambda *_: _registration())
     monkeypatch.setattr(
-        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision(type="allow")
+        apie_module, "evaluate_guard", lambda *args, **kwargs: GuardDecision()
     )
     monkeypatch.setattr(
         apie_module,
@@ -214,7 +214,7 @@ async def test_async_send_test_event_pipeline_mode(monkeypatch) -> None:
         return {"id": "hof_1", "status": "requested"}
 
     async def async_allow_guard(*args, **kwargs):
-        return GuardDecision(type="allow")
+        return GuardDecision()
 
     monkeypatch.setattr(apie_module.AsyncEventQueue, "start", lambda self: None)
     monkeypatch.setattr(apie_module.AsyncEventQueue, "flush", async_noop)

@@ -6,12 +6,14 @@ from typing import Any, Callable, Dict, Literal, Optional, TypedDict
 JsonDict = Dict[str, Any]
 QueuedEvent = Dict[str, Any]
 
-ReleaseMode = Literal["monitor", "guard"]
+ReleaseMode = Literal["monitor", "enforce"]
 GuardMode = Literal["monitor", "enforce"]
+GuardDecisionType = Literal["allow", "block", "warn", "require_approval"]
+EnforcementAction = Literal["proceed", "warn", "block", "wait_for_approval"]
 GuardFailureMode = Literal["fail_open", "fail_closed", "throw"]
 OnErrorMode = Literal["silent", "warn", "throw"]
 QueueDropPolicy = Literal["drop_oldest", "drop_newest"]
-SendTestEventMode = Literal["pipeline", "single"]
+SendTestEventMode = Literal["pipeline", "single", "proof"]
 
 
 class ApieInfoResponse(TypedDict):
@@ -186,12 +188,14 @@ class SendTestEventResult:
 
 @dataclass(slots=True)
 class GuardDecision:
-    type: Literal["allow", "block", "warn", "require_approval"]
+    policy_decision: GuardDecisionType = "allow"
+    effective_decision: GuardDecisionType = "allow"
+    mode: GuardMode = "monitor"
+    enforcement_action: EnforcementAction = "proceed"
     reason: Optional[str] = None
     decision_id: Optional[str] = None
     approval_id: Optional[str] = None
     receipt_id: Optional[str] = None
-    monitor_decision: Optional[Literal["allow", "block", "warn", "require_approval"]] = None
     matched_guardrails: list[JsonDict] = field(default_factory=list)
 
 

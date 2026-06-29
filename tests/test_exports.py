@@ -32,4 +32,5 @@ def test_root_exports_cover_public_surface() -> None:
 def test_exported_types_can_be_constructed() -> None:
     config = sdk.ApieConfig(agent=sdk.ApieAgentConfig(key="agent", name="Agent"))
     assert config.agent.key == "agent"
+    assert config.mode is None
     assert config.release_mode == "monitor"

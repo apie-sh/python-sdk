@@ -64,7 +64,7 @@ Start simple; add metadata later when you tune guardrails for production.
 | [MCP proxy](#mcp-proxy) | MCP hosts (Cursor, Claude Desktop) | Config only |
 | Framework plugin | LangChain, OpenAI Agents | ~5 lines |
 | `with_run` + instrumented client | Custom agents with MCP tools | ~10 lines |
-| `with_tool` with full metadata | Production guard mode tuning | Per call site |
+| `with_tool` with full metadata | Production Enforce mode tuning | Per call site |
 
 ### 3. Instrument
 
@@ -119,7 +119,7 @@ apie.with_run({"inputSummary": "Process request"}, lambda _run: apie.with_tool(
 ))
 ```
 
-Action and resource types are inferred from tool names when omitted. Add explicit `action`, `resource`, and `environment` when enabling guard mode in production.
+Action and resource types are inferred from tool names when omitted. Add explicit `action`, `resource`, and `environment` when enabling Enforce mode in production.
 
 ## Async
 
@@ -252,8 +252,8 @@ with_mcp_tool_call(
 | --- | --- |
 | `apie init` | Scaffold `apie.config.py` |
 | `apie doctor [--send-test] [--mcp]` | Validate config, queue, and ingestion health |
-| `apie mcp proxy` | MCP proxy (stdio or SSE) with monitor/guard modes |
-| `apie send-test-event` | Verify connectivity (pipeline or single mode) |
+| `apie mcp proxy` | MCP proxy (stdio or SSE) with Monitor/Enforce modes |
+| `apie send-test-event` | Verify connectivity (pipeline, single, or proof mode) |
 | `apie capabilities declare` | Declare capabilities from config |
 | `apie guardrails enable <key>` | Enable a guardrail template |
 | `apie report create` | Generate a boundary report |

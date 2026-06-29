@@ -21,7 +21,7 @@ class McpServerConfig:
     agent_key: str
     upstream: McpUpstreamConfig
     agent_name: str | None = None
-    release_mode: ReleaseMode = "monitor"
+    mode: ReleaseMode = "monitor"
     redact_keys: list[str] | None = None
     environment: str | None = None
     approval_timeout_ms: int | None = None
@@ -32,7 +32,8 @@ class McpProxyConfigFile:
     agent_key: str | None = None
     agent_name: str | None = None
     server_name: str | None = None
-    release_mode: ReleaseMode | None = None
+    mode: ReleaseMode | None = None
+    release_mode: str | None = None
     upstream: McpUpstreamConfig | None = None
     redact_keys: list[str] | None = None
     environment: str | None = None
@@ -46,6 +47,15 @@ def _parse_upstream(raw: dict[str, Any]) -> McpUpstreamConfig:
         args=[str(arg) for arg in raw.get("args", [])],
         env={str(k): str(v) for k, v in (raw.get("env") or {}).items()} or None,
     )
+
+
+def _normalize_mcp_mode(mode: Any, release_mode: Any, source: str) -> ReleaseMode:
+    if release_mode == "guard":
+        raise ValueError(f'{source} uses releaseMode: "guard". Replace it with mode: "enforce".')
+    requested = mode or release_mode or "monitor"
+    if requested in {"monitor", "enforce"}:
+        return requested
+    raise ValueError(f'{source} mode must be "monitor" or "enforce"')
 
 
 def load_mcp_proxy_config(config_path: str, server_name: str | None = None) -> McpServerConfig:
@@ -66,7 +76,11 @@ def load_mcp_proxy_config(config_path: str, server_name: str | None = None) -> M
             server_name=name,
             agent_key=server["agentKey"],
             agent_name=server.get("agentName") or raw.get("agentName"),
-            release_mode=server.get("releaseMode") or raw.get("releaseMode") or "monitor",
+            mode=_normalize_mcp_mode(
+                server.get("mode") or raw.get("mode"),
+                server.get("releaseMode") or raw.get("releaseMode"),
+                f'MCP server "{name}"',
+            ),
             upstream=_parse_upstream(server["upstream"]),
             redact_keys=server.get("redactKeys") or raw.get("redactKeys"),
             environment=server.get("environment") or raw.get("environment"),
@@ -80,7 +94,7 @@ def load_mcp_proxy_config(config_path: str, server_name: str | None = None) -> M
         server_name=raw["serverName"],
         agent_key=raw["agentKey"],
         agent_name=raw.get("agentName"),
-        release_mode=raw.get("releaseMode") or "monitor",
+        mode=_normalize_mcp_mode(raw.get("mode"), raw.get("releaseMode"), "MCP config"),
         upstream=_parse_upstream(raw["upstream"]),
         redact_keys=raw.get("redactKeys"),
         environment=raw.get("environment"),

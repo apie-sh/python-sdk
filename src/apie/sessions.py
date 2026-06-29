@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from .http import AsyncHttpClient, HttpClient
 from .types import AgentRun, ApieSession, JsonDict
 
-SessionKind = Literal["single_agent", "multi_agent", "pipeline"]
+SessionKind = Literal["single_agent", "multi_agent", "pipeline", "activation_proof"]
 SessionStatus = Literal["completed", "failed", "cancelled"]
 
 

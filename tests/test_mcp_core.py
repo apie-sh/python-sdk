@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from apie.mcp_core.config import load_mcp_proxy_config
 from apie.mcp_core.inference import infer_from_tool_name
 from apie.mcp_core.payload import McpToolCallInput, build_mcp_tool_call_payload
@@ -46,7 +44,7 @@ def test_load_mcp_proxy_config_single_server(tmp_path: Path) -> None:
             {
                 "agentKey": "agent-1",
                 "serverName": "filesystem",
-                "releaseMode": "monitor",
+                "mode": "monitor",
                 "upstream": {"command": "npx", "args": ["-y", "server"]},
             }
         ),
@@ -55,6 +53,7 @@ def test_load_mcp_proxy_config_single_server(tmp_path: Path) -> None:
     loaded = load_mcp_proxy_config(str(config_path))
     assert loaded.server_name == "filesystem"
     assert loaded.agent_key == "agent-1"
+    assert loaded.mode == "monitor"
     assert loaded.upstream.command == "npx"
 
 

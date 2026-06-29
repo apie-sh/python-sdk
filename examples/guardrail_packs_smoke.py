@@ -11,7 +11,7 @@ def main() -> None:
                 "name": "Guardrail Pack Smoke Agent",
             },
             "runtime": {"environment": "production"},
-            "releaseMode": "monitor",
+            "mode": "monitor",
         }
     )
     apie.ready()

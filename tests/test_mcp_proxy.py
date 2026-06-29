@@ -7,18 +7,18 @@ from apie.mcp_proxy.interceptor import APIE_APPROVAL_CODE, APIE_BLOCKED_CODE, Mc
 from apie.types import GuardDecision
 
 
-def _config(release_mode: str = "monitor") -> McpServerConfig:
+def _config(mode: str = "monitor") -> McpServerConfig:
     return McpServerConfig(
         server_name="test-server",
         agent_key="agent",
-        release_mode=release_mode,  # type: ignore[arg-type]
+        mode=mode,  # type: ignore[arg-type]
         upstream=McpUpstreamConfig(command="echo"),
     )
 
 
 def _mock_apie_client(**overrides: object) -> MagicMock:
     client = MagicMock()
-    client.evaluate.return_value = GuardDecision(type="allow")
+    client.evaluate.return_value = GuardDecision()
     client.build_guardrail_evaluated_event.return_value = {"type": "agent.guardrail.evaluated"}
     client.build_tool_call_events.return_value = [{"type": "agent.tool.called"}]
     client.build_mcp_called_event.return_value = {"type": "agent.mcp.called"}
@@ -51,12 +51,15 @@ def test_interceptor_allows_tool_calls_in_monitor_mode() -> None:
 def test_interceptor_blocks_when_guard_decision_is_block() -> None:
     apie_client = _mock_apie_client()
     apie_client.evaluate.return_value = GuardDecision(
-        type="block",
+        policy_decision="block",
+        effective_decision="block",
+        mode="enforce",
+        enforcement_action="block",
         reason="blocked",
         decision_id="dec_1",
     )
     interceptor = McpInterceptor(
-        config=_config("guard"),
+        config=_config("enforce"),
         apie_client=apie_client,
     )
 
@@ -69,12 +72,15 @@ def test_interceptor_blocks_when_guard_decision_is_block() -> None:
 def test_interceptor_waits_for_approval_when_required() -> None:
     apie_client = _mock_apie_client()
     apie_client.evaluate.return_value = GuardDecision(
-        type="require_approval",
+        policy_decision="require_approval",
+        effective_decision="require_approval",
+        mode="enforce",
+        enforcement_action="wait_for_approval",
         approval_id="appr_1",
         reason="needs review",
     )
     interceptor = McpInterceptor(
-        config=_config("guard"),
+        config=_config("enforce"),
         apie_client=apie_client,
     )
 
@@ -86,13 +92,16 @@ def test_interceptor_waits_for_approval_when_required() -> None:
 def test_interceptor_rejects_when_approval_not_granted() -> None:
     apie_client = _mock_apie_client()
     apie_client.evaluate.return_value = GuardDecision(
-        type="require_approval",
+        policy_decision="require_approval",
+        effective_decision="require_approval",
+        mode="enforce",
+        enforcement_action="wait_for_approval",
         approval_id="appr_1",
         reason="needs review",
     )
     apie_client.wait_for_approval.return_value = "timeout"
     interceptor = McpInterceptor(
-        config=_config("guard"),
+        config=_config("enforce"),
         apie_client=apie_client,
     )
 

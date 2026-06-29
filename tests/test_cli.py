@@ -44,6 +44,7 @@ def test_init_generates_valid_config_with_capabilities(tmp_path, monkeypatch) ->
     assert config_path.exists()
     source = config_path.read_text(encoding="utf-8")
     assert '"capabilities": [' in source
+    assert '"mode": "monitor"' in source
     compile(source, str(config_path), "exec")
 
     assert (tmp_path / ".env").exists()
@@ -113,12 +114,13 @@ def test_doctor_command_with_send_test(monkeypatch) -> None:
                 "enabled": True,
                 "baseUrl": "http://localhost:3000",
                 "apiKeyConfigured": True,
-                "releaseMode": "monitor",
+                "mode": "monitor",
                 "guardFailureMode": "fail_open",
                 "runtimeEnvironment": "development",
                 "runtimeFramework": "langgraph",
                 "queueStoragePath": None,
                 "redactionEnabled": False,
+                "trustWarnings": [],
                 "queue": QueueStats(),
             }
 

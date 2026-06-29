@@ -22,6 +22,10 @@ from .types import (
 )
 
 
+def _normalize_mode(value: Any) -> str:
+    return "enforce" if value in {"enforce", "guard"} else "monitor"
+
+
 def is_apie_client(value: Any) -> bool:
     return (
         value is not None
@@ -205,7 +209,9 @@ def coerce_config(value: Any) -> ApieConfig:
             model_provider=_pick(version_raw, "model_provider", "modelProvider"),
             model_name=_pick(version_raw, "model_name", "modelName"),
         ),
-        release_mode=_pick(value, "release_mode", "releaseMode", default="monitor"),
+        release_mode=_normalize_mode(
+            _pick(value, "release_mode", "releaseMode", default="monitor")
+        ),
         mode=_pick(value, "mode"),
         tools=_coerce_tools(list(_pick(value, "tools", default=[]) or [])),
         capabilities=_coerce_capabilities(list(_pick(value, "capabilities", default=[]) or [])),
@@ -281,17 +287,12 @@ def resolve_config(
     api_key = config.api_key or os.getenv("APIE_API_KEY")
     base_url = config.base_url or os.getenv("APIE_BASE_URL") or "http://localhost:3000"
 
-    release_mode = (
-        "guard"
-        if config.mode == "enforce"
-        else "monitor"
-        if config.mode == "monitor"
-        else config.release_mode
-    )
+    mode = _normalize_mode(config.mode or config.release_mode)
 
     config.api_key = api_key
     config.base_url = base_url
-    config.release_mode = release_mode
+    config.mode = mode  # type: ignore[assignment]
+    config.release_mode = mode  # type: ignore[assignment]
     if not config.guard_failure_mode:
         config.guard_failure_mode = "fail_open"
     return config

@@ -43,7 +43,7 @@ async def start_sse_proxy(options: SseProxyOptions) -> None:
             base_url=options.base_url,
             agent_key=config.agent_key,
             agent_name=config.agent_name,
-            release_mode=config.release_mode,
+            mode=config.mode,
             runtime=ApieRuntimeConfig(framework="mcp-proxy", language="python"),
         )
     )

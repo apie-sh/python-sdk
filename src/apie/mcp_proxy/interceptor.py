@@ -111,7 +111,7 @@ class McpInterceptor:
         decision: GuardDecision,
         payload: Any,
     ) -> ToolCallInterceptResult:
-        if decision.type == "block":
+        if decision.effective_decision == "block":
             return ToolCallInterceptResult(
                 allowed=False,
                 error={
@@ -120,6 +120,10 @@ class McpInterceptor:
                     "data": {
                         "reason": decision.reason,
                         "decision_id": decision.decision_id,
+                        "policy_decision": decision.policy_decision,
+                        "effective_decision": decision.effective_decision,
+                        "enforcement_action": decision.enforcement_action,
+                        "mode": decision.mode,
                         "matched_guardrail": (
                             decision.matched_guardrails[0].get("key")
                             if decision.matched_guardrails
@@ -129,7 +133,7 @@ class McpInterceptor:
                 },
             )
 
-        if decision.type == "require_approval" and decision.approval_id:
+        if decision.effective_decision == "require_approval" and decision.approval_id:
             self._apie_client.send(
                 [
                     self._apie_client.build_approval_requested_event(

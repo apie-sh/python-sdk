@@ -8,7 +8,7 @@ def main() -> None:
     apie = Apie.create(
         {
             "agent": {"key": "langchain-demo", "name": "LangChain Demo"},
-            "release_mode": "monitor",
+            "mode": "monitor",
         }
     )
     apie.ready()

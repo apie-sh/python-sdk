@@ -49,7 +49,7 @@ def build_register_payload(config: ApieConfig) -> dict[str, Any]:
             "sdk_version": config.runtime.sdk_version or SDK_VERSION,
         },
         "model": _to_plain(config.model),
-        "release_mode": config.release_mode,
+        "mode": config.mode or config.release_mode,
         "tools": [to_wire_tool(tool) for tool in config.tools] or None,
         "prompt_hash": config.prompt_hash,
         "hostname": os.getenv("HOSTNAME", "local"),

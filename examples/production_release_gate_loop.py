@@ -14,7 +14,7 @@ def main() -> None:
                 "environment": "production",
                 "framework": "langgraph",
             },
-            "releaseMode": "monitor",
+            "mode": "monitor",
         }
     )
     apie.ready()
