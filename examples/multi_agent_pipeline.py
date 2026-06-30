@@ -18,7 +18,7 @@ def main() -> None:
                     "runId": orchestrator_run.id,
                     "sessionId": session.id,
                     "stepName": "Plan",
-                    "payloadSummary": {"model": "gpt-4o-mini"},
+                    "payloadSummary": {"model": "gpt-4.1-mini"},
                 },
                 lambda: None,
             )

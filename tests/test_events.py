@@ -54,7 +54,7 @@ def test_build_workflow_event_keeps_session_sequence_fields() -> None:
             "sessionId": "ses_1",
             "sessionSequenceNumber": 3,
             "stepName": "Summarize",
-            "payloadSummary": {"model": "gpt-4", "tokens": 120},
+            "payloadSummary": {"model": "gpt-4.1-mini", "tokens": 120},
         },
     )
     assert event["type"] == "agent.llm.called"
