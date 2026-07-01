@@ -73,7 +73,7 @@ def test_workflow_wrappers_route_to_apie_primitives() -> None:
     )
     with_vercel_ai_generation(
         apie,
-        {"runId": "run_1", "model": "gpt-4.1-mini"},
+        {"runId": "run_1", "model": "gpt-5.4-mini"},
         lambda: "llm",
     )
 
